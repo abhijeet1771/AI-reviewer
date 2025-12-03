@@ -28,5 +28,25 @@ public class UserService {
     private void unusedMethod() {
         System.out.println("This is never called");
     }
+    
+    // New method with bugs
+    public void deleteUser(int index) {
+        // No bounds check - AI should catch
+        users.remove(index);
+    }
+    
+    public void updateUser(int index, String newName) {
+        // No validation - AI should catch
+        users.set(index, newName);
+    }
+    
+    public int getUserCount() {
+        // Inefficient - AI should suggest optimization
+        int count = 0;
+        for (int i = 0; i < users.size(); i++) {
+            count++;
+        }
+        return count;
+    }
 }
 
