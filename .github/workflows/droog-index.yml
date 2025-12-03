@@ -1,0 +1,72 @@
+name: Droog AI Index Update
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to index'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  update-index:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build Droog AI
+        run: npm run build
+      
+      - name: Update Index
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BRANCH="${{ github.event.inputs.branch }}"
+          fi
+          
+          echo "🚀 Droog AI Index Update Started Automatically!"
+          echo "📦 Indexing branch: ${BRANCH}..."
+          echo "📦 Repository: ${{ github.repository }}"
+          echo ""
+          
+          node dist/index.js index --repo "${{ github.repository }}" --branch "${BRANCH}"
+          
+          echo ""
+          echo "✅ Droog AI Index Update Complete!"
+      
+      - name: Commit and push index
+        if: success()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          if [ -f ".droog-embeddings.json" ]; then
+            git add .droog-embeddings.json
+            git commit -m "🤖 Update Droog AI index [skip ci]" || echo "No changes to commit"
+            git push || echo "Nothing to push"
+          fi
+        continue-on-error: true
