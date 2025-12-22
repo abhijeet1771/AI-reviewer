@@ -1,0 +1,131 @@
+name: Droog AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: string
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+    
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+        continue-on-error: true
+      
+      - name: Install dependencies
+        run: |
+          if [ -f "package-lock.json" ]; then
+            npm ci
+          else
+            npm install
+          fi
+      
+      - name: Build Droog AI
+        run: npm run build
+      
+      - name: Load index if exists
+        id: load-index
+        run: |
+          if [ -f ".droog-embeddings.json" ]; then
+            echo "index_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "index_exists=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+      
+      - name: Run Droog AI Review
+        id: review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUMBER="${{ github.event.inputs.pr_number }}"
+          fi
+          
+          echo "🚀 Droog AI Started Automatically!"
+          echo "🔍 Reviewing PR #${PR_NUMBER}..."
+          echo "📦 Repository: ${{ github.repository }}"
+          echo "🔗 PR URL: https://github.com/${{ github.repository }}/pull/${PR_NUMBER}"
+          echo ""
+          
+          if [ "${{ steps.load-index.outputs.index_exists }}" = "true" ]; then
+            echo "✅ Index found - using cross-repo analysis"
+          else
+            echo "ℹ️  No index found - running without cross-repo analysis"
+          fi
+          
+          node dist/index.js review --repo "${{ github.repository }}" --pr "${PR_NUMBER}" --enterprise --post
+          
+          echo ""
+          echo "✅ Droog AI Review Complete!"
+      
+      - name: Upload review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-report
+          path: report.json
+          retention-days: 7
+      
+      - name: Comment PR with summary
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let summary = '## 🤖 Droog AI Review Complete\n\n';
+            summary += '**Status:** ✅ Review completed automatically\n\n';
+            summary += `**View Logs:** [Click here to see full console output](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n`;
+            
+            try {
+              if (fs.existsSync('report.json')) {
+                const report = JSON.parse(fs.readFileSync('report.json', 'utf8'));
+                summary += `**Total Issues Found:** ${report.totalIssues || 0}\n`;
+                summary += `- 🔴 High: ${report.issuesBySeverity?.high || 0}\n`;
+                summary += `- 🟡 Medium: ${report.issuesBySeverity?.medium || 0}\n`;
+                summary += `- 🟢 Low: ${report.issuesBySeverity?.low || 0}\n\n`;
+                
+                if (report.summary) {
+                  summary += report.summary;
+                }
+                
+                summary += '\n\n📊 [View Full Report](./report.json)';
+                summary += '\n\n🔍 [View Workflow Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})';
+              } else {
+                summary += '✅ Review completed successfully!';
+                summary += '\n\n🔍 [View Workflow Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})';
+              }
+            } catch (error) {
+              summary += '⚠️ Review completed with some issues. Check logs for details.';
+              summary += '\n\n🔍 [View Workflow Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})';
+            }
+            
+            const prNumber = context.payload.pull_request?.number || '${{ github.event.inputs.pr_number }}';
+            github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
